@@ -8,6 +8,7 @@ import polars.selectors as cs
 import requests
 import xlsxwriter
 from datetime import datetime, timedelta
+from requests.adapters import HTTPAdapter, Retry
 from . import utils
 
 
@@ -28,6 +29,17 @@ def dt_iterate(start, end, step):
     start += step
 
 
+def requests_retry_session(
+    total = 10, backoff_factor = 0.5, status_forcelist = (500, 502, 503, 504)):
+  session = requests.Session()
+  retries = Retry(
+    total = total, backoff_factor = backoff_factor, status_forcelist = status_forcelist)
+  adapter = HTTPAdapter(max_retries = retries)
+  session.mount('http://', adapter)
+  session.mount('https://', adapter)
+  return session
+
+
 class Report:
   def __init__(self, base_url: str, username: str, password: str):
     self.url = base_url
@@ -36,15 +48,13 @@ class Report:
     self.key = None
 
   def login(self):
-    response = requests.get(
-      self.url,
-      json = {'login': True, 'username': self.username, 'password': self.password})
+    request_json = {'login': True, 'username': self.username, 'password': self.password}
+    response = requests_retry_session().get(self.url, json = request_json)
     response.raise_for_status()
     data = response.json()
 
     assert data['result'] == 'success', f'Login unsuccessful: {data}'
-
-    print('Login successful. Auth-Key:', data['Auth-Key'])
+    print('Login successful')
     self.key = data['Auth-Key']
 
   @staticmethod
@@ -57,14 +67,12 @@ class Report:
     return {'Auth-Key': self.key, 'Username': self.username}
 
   def get_patient_training(self, date: datetime):
-    response = requests.get(
-      self.url,
-      headers = self.headers,
-      json = {
-        'get_total_ccp_class_attendancedata': True,
-        'date': date.strftime('%d-%m-%Y'),
-      },
-    )
+    request_json = {
+      'get_total_ccp_class_attendancedata': True,
+      'date': date.strftime('%d-%m-%Y')
+    }
+    response = requests_retry_session().get(
+      self.url, headers = self.headers, json = request_json)
     response.raise_for_status()
     data = response.json()
 
@@ -76,12 +84,12 @@ class Report:
       return data['data'] if data['result'] == 'success' else []
 
   def get_nurse_training(self, date: datetime):
-    response = requests.get(
-      self.url,
-      headers = self.headers,
-      json = {
-        'get_total_nurse_training_sessiondata': True, 'date': date.strftime('%d-%m-%Y')}
-    )
+    request_json = {
+      'get_total_nurse_training_sessiondata': True,
+      'date': date.strftime('%d-%m-%Y')
+    }
+    response = requests_retry_session().get(
+      self.url, headers = self.headers, json = request_json)
     response.raise_for_status()
     data = response.json()
 
@@ -93,11 +101,9 @@ class Report:
       return data['data'] if data['result'] == 'success' else []
 
   def get_nurse_details(self, phone_number: str):
-    response = requests.get(
-      self.url,
-      headers = self.headers,
-      json = {'get_nurses_detailes_data': True, 'username': phone_number}
-    )
+    request_json = {'get_nurses_detailes_data': True, 'username': phone_number}
+    response = requests_retry_session().get(
+      self.url, headers = self.headers, json = request_json)
     response.raise_for_status()
     data = response.json()
 
@@ -255,7 +261,7 @@ def get_dates(args, params):
     raise Exception('End date cannot be later than today.')
 
   print(
-    f"Attempting to fetch data between {dates['start']} and {dates['end']}, inclusive.")
+    f"Attempting to fetch data between {dates['start']} and {dates['end']}, inclusive")
   return dates
 
 
