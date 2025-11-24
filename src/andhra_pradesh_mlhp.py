@@ -18,7 +18,7 @@ USERS_TABLE_NAME = 'users'
 DEFAULT_EXTRACTED_AT = dt.datetime(2023, 4, 1).replace(tzinfo = dt.timezone.utc)
 
 
-def get_try_chunk_days(range_days, try_chunk_days = (90, 45, 21, 10, 3)):
+def get_try_chunk_days(range_days, try_chunk_days = (90, 45, 21, 10, 3, 1)):
   idx = next(
     (i for i in range(len(try_chunk_days)) if try_chunk_days[i] < range_days),
     len(try_chunk_days))
@@ -78,7 +78,6 @@ def get_sessions_from_api(fromdate, todate, username, api_key, api_url):
 
 
 def sync_sessions_by_users(users_slice, params, extracted_at, overlap_days = 30):
-  # TODO: how far back can sessions be created? affects overlap_days
   def get_where(x, colname = 'username'):
     return f"where {colname} in ('{"', '".join(x)}')"
 
@@ -94,7 +93,8 @@ def sync_sessions_by_users(users_slice, params, extracted_at, overlap_days = 30)
 
   for user in users_slice.iter_rows(named = True):
     try:
-      fromdate = max(DEFAULT_EXTRACTED_AT.date(), user['max_todate'])
+      fromdate = user['max_todate'] - dt.timedelta(days = overlap_days - 1)
+      fromdate = max(fromdate, DEFAULT_EXTRACTED_AT.date())
       sessions_now = get_sessions_from_api(
         fromdate, todate, user['username'], api_key, api_url)
       sessions_list.append(sessions_now)
