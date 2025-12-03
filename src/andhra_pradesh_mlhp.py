@@ -77,7 +77,7 @@ def get_sessions_from_api(fromdate, todate, username, api_key, api_url):
   return df
 
 
-def sync_sessions_by_users(users_slice, params, extracted_at, overlap_days = 30):
+def sync_sessions_by_users(users_slice, params, extracted_at, overlap_days = 5):
   def get_where(x, colname = 'username'):
     return f"where {colname} in ('{"', '".join(x)}')"
 
