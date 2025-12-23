@@ -18,7 +18,7 @@ USERS_TABLE_NAME = 'users'
 DEFAULT_EXTRACTED_AT = dt.datetime(2023, 4, 1).replace(tzinfo = dt.timezone.utc)
 
 
-def get_try_chunk_days(range_days, try_chunk_days = (90, 45, 21, 10, 3, 1)):
+def get_try_chunk_days(range_days, try_chunk_days = (90, 45, 21, 10, 3)):
   idx = next(
     (i for i in range(len(try_chunk_days)) if try_chunk_days[i] < range_days),
     len(try_chunk_days))
@@ -126,12 +126,14 @@ def sync_sessions_by_users(users_slice, params, extracted_at, overlap_days = 5):
 
 
 def sync_data_to_warehouse(params, timeout_mins, trigger_mode, max_workers = 4):
-  col_name = '_extracted_at'
+  update_users(params)
+
+  colname = '_extracted_at'
   timeout = timeout_mins * 60 if timeout_mins > 0 else None
   num_users_per_slice = 10  # bigquery quota of 1500 table appends per 24 hours
 
   if trigger_mode == 'continuing':
-    query = f"select max({col_name}) from `{params['dataset']}.{USERS_TABLE_NAME}`"
+    query = f"select max({colname}) from `{params['dataset']}.{USERS_TABLE_NAME}`"
     extracted_at = utils.read_bigquery(query, params['credentials']).item()
 
   if trigger_mode != 'continuing' or extracted_at is None:
@@ -143,10 +145,10 @@ def sync_data_to_warehouse(params, timeout_mins, trigger_mode, max_workers = 4):
   )
   if trigger_mode == 'continuing':
     query += (
-      f" where {col_name} is null or {col_name} != "
-      f"(select max({col_name}) from `{params['dataset']}.{USERS_TABLE_NAME}`)"
+      f" where {colname} is null or {colname} != "
+      f"(select max({colname}) from `{params['dataset']}.{USERS_TABLE_NAME}`)"
     )
-  users = utils.read_bigquery(query, params['credentials']).sort([col_name, 'username'])
+  users = utils.read_bigquery(query, params['credentials']).sort([colname, 'username'])
 
   sync_sessions_by_users_p = functools.partial(
     sync_sessions_by_users, params = params, extracted_at = extracted_at)
@@ -189,39 +191,25 @@ def trigger_workflow(timeout_mins, trigger_mode = 'continuing'):
   return response
 
 
-def upload_users(params, data_dir = 'data'):
-  file_name = 'MLHP CHO Second Batch - mlhp_data_10032_new.csv'
-  schema_overrides = dict(nin_number = pl.String, mobile_no = pl.String)
-  colname_mapping = dict(
-    old_district = 'old_district_name',
-    new_district = 'district_name',
-    mandal = 'mandal_name',
-    ysr_clinicname = 'ysr_clinic_name',
-    nin_number = 'username',
-    sec_code = 'secretariat_code',
-    mobile_no = 'mobile_number'
-  )
-  created_at = dt.datetime.now(dt.timezone.utc).replace(microsecond = 0)
+def update_users(params, colname = 'username'):
+  users_current = utils.read_bigquery(
+    f"select distinct {colname} from `{params['dataset']}.{USERS_TABLE_NAME}`",
+    params['credentials'])
+  users_mappings = utils.read_bigquery(
+    f'select distinct {colname} from andhra_pradesh_ccp_mappings.mlhp_users',
+    params['credentials'])
 
-  df_raw = pl.read_csv(Path(data_dir, file_name), schema_overrides = schema_overrides)
-  # df_raw.group_by('nin_number').len().filter(pl.col('len') > 1)  # hopefully empty
-  df = (
-    df_raw.rename(colname_mapping)
+  users_new = (
+    users_mappings
+    .join(users_current, on = colname, how = 'anti')
     .with_columns(
-      created_at = created_at,
+      created_at = dt.datetime.now(dt.timezone.utc).replace(microsecond = 0),
       max_todate = DEFAULT_EXTRACTED_AT.date(),
       _extracted_at = DEFAULT_EXTRACTED_AT,
       is_extracting = False
     )
-    .unique('username', keep = 'first')
   )
-  # with pl.Config(tbl_cols = -1):
-  #   print(df)
-  # TODO: combine and reconcile first and second batches, if necessary
-  # TODO: deal with the next batch when it comes, without refetching all data
-
-  utils.write_bigquery(df_raw, f'{USERS_TABLE_NAME}_raw', params, 'WRITE_EMPTY')
-  utils.write_bigquery(df, USERS_TABLE_NAME, params, 'WRITE_EMPTY')
+  utils.write_bigquery(users_new, USERS_TABLE_NAME, params, 'WRITE_APPEND')
 
 
 def parse_args():
