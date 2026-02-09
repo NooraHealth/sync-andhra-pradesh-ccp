@@ -296,12 +296,10 @@ def main():
         data = read_nurses_data_from_api(params['source_params'], nurse_phones)
 
       if len(data) > 0:
-        return None
-
-      if args.dest == 'bigquery':
-        write_data_to_bigquery(params, data)
-      else:
-        write_data_to_excel(data)
+        if args.dest == 'bigquery':
+          write_data_to_bigquery(params, data)
+        else:
+          write_data_to_excel(data)
 
   except Exception as e:
     if params['environment'] == 'prod':
