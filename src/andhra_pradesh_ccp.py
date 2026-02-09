@@ -116,7 +116,7 @@ class Report:
       return data['data'] if data['result'] == 'success' else []
 
 
-def read_data_from_api(params, dates):
+def read_sessions_data_from_api(params, dates):
   report = Report(params['url'], params['username'], params['password'])
   report.login()
   iter_dates = [*dt_iterate(dates['start'], dates['end'], timedelta(days = 1))]
@@ -139,31 +139,6 @@ def read_data_from_api(params, dates):
 
   for x in nurse_trainings:
     x['md5'] = dict_hash(x)
-
-  phones_in_patient_trainings = [
-    x2 for x1 in patient_trainings for x2 in x1['session_conducted_by'].split(',')
-  ]
-
-  phones_in_nurse_trainings = []
-  for i in nurse_trainings:
-    if i.get('trainerdata1'):
-      for trainer in i['trainerdata1']:
-        phones_in_nurse_trainings.append(trainer['phone_no'])
-
-    if i.get('traineesdata1'):
-      for trainee in i['traineesdata1']:
-        phones_in_nurse_trainings.append(trainee['phone_no'])
-
-  all_phones = list(set(phones_in_patient_trainings + phones_in_nurse_trainings))
-
-  with concurrent.futures.ThreadPoolExecutor() as executor:
-    nurse_details_nested = executor.map(report.get_nurse_details, all_phones)
-  nurses = [x2 for x1 in nurse_details_nested for x2 in x1]
-
-  nurses_df = pl.from_dicts(nurses).with_columns(
-    cs.by_name('user_created_dateandtime', require_all = False)
-    .str.to_datetime('%Y-%m-%d %H:%M:%S')
-  )
 
   int_cols = ['mothers_trained', 'family_members_trained', 'total_trained']
   patient_trainings_df = (
@@ -189,10 +164,39 @@ def read_data_from_api(params, dates):
   )
 
   data_frames = {
-    'nurses': nurses_df,
     'patient_training_sessions': patient_trainings_df,
     'nurse_training_sessions': nurse_trainings_df,
   }
+  return data_frames
+
+
+def read_nurse_phones_from_bigquery(params):
+  col_name = 'session_conducted_by'
+  phones_raw = utils.read_bigquery(
+    (
+      f"select distinct {col_name} from "
+      f"`{params['dataset']}.patient_training_sessions` "
+      f"where {col_name} != ''"
+    ),
+    params['credentials'])
+  phones = phones_raw.get_column(col_name).str.split(',').explode().unique().sort()
+  return phones
+
+
+def read_nurses_data_from_api(params, nurse_phones):
+  report = Report(params['url'], params['username'], params['password'])
+  report.login()
+
+  with concurrent.futures.ThreadPoolExecutor() as executor:
+    nurse_details_nested = executor.map(report.get_nurse_details, nurse_phones)
+  nurses = [x2 for x1 in nurse_details_nested for x2 in x1]
+
+  nurses_df = pl.from_dicts(nurses).with_columns(
+    cs.by_name('user_created_dateandtime', require_all = False)
+    .str.to_datetime('%Y-%m-%d %H:%M:%S')
+  )
+
+  data_frames = {'nurses': nurses_df}
   return data_frames
 
 
@@ -203,27 +207,16 @@ def write_data_to_excel(data_frames, filepath = 'data.xlsx'):
 
 
 def write_data_to_bigquery(params, data_frames):
-  extracted_at = datetime.now(dt.timezone.utc).replace(microsecond = 0)
-  for key in data_frames:
-    data_frames[key] = utils.add_extracted_columns(data_frames[key], extracted_at)
-
-  if utils.read_bigquery_exists('nurses', params):
-    # keep the latest data for each username
-    nurses_old = utils.read_bigquery(
-      f"select * from `{params['dataset']}.nurses`", params['credentials'])
-    nurses_concat = pl.concat(
-      [nurses_old, data_frames['nurses']], how = 'diagonal_relaxed')
-    data_frames['nurses'] = nurses_concat.group_by('username').tail(1)
-
   write_dispositions = {
     'nurses': 'WRITE_TRUNCATE',
     'patient_training_sessions': 'WRITE_APPEND',
     'nurse_training_sessions': 'WRITE_APPEND',
   }
+  extracted_at = datetime.now(dt.timezone.utc).replace(microsecond = 0)
 
-  for table_name in sorted(data_frames.keys()):
-    utils.write_bigquery(
-      data_frames[table_name], table_name, params, write_dispositions[table_name])
+  for key in data_frames:
+    data_frames[key] = utils.add_extracted_columns(data_frames[key], extracted_at)
+    utils.write_bigquery(data_frames[key], key, params, write_dispositions[key])
 
 
 def get_dates_from_bigquery(
@@ -294,14 +287,20 @@ def main():
     params = utils.get_params(source_name)
     dates = get_dates(args, params)
 
-    data = read_data_from_api(params['source_params'], dates)
-    if data is None:
-      return None
+    for entity in ['sessions', 'nurses']:
+      if entity == 'sessions':
+        data = read_sessions_data_from_api(params['source_params'], dates)
+      elif entity == 'nurses':
+        nurse_phones = read_nurse_phones_from_bigquery(params)
+        data = read_nurses_data_from_api(params['source_params'], nurse_phones)
 
-    if args.dest == 'bigquery':
-      write_data_to_bigquery(params, data)
-    else:
-      write_data_to_excel(data)
+      if data is None:
+        return None
+
+      if args.dest == 'bigquery':
+        write_data_to_bigquery(params, data)
+      else:
+        write_data_to_excel(data)
 
   except Exception as e:
     if params['environment'] == 'prod':
