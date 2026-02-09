@@ -127,12 +127,7 @@ def read_sessions_data_from_api(params, dates):
 
   with concurrent.futures.ThreadPoolExecutor() as executor:
     nurse_trainings_nested = executor.map(report.get_nurse_training, iter_dates)
-
   nurse_trainings = [x2 for x1 in nurse_trainings_nested for x2 in x1]
-
-  if not patient_trainings:
-    print('No patient training sessions found')
-    return
 
   for x in patient_trainings:
     x['md5'] = dict_hash(x)
@@ -140,33 +135,37 @@ def read_sessions_data_from_api(params, dates):
   for x in nurse_trainings:
     x['md5'] = dict_hash(x)
 
-  int_cols = ['mothers_trained', 'family_members_trained', 'total_trained']
-  patient_trainings_df = (
-    pl.from_dicts(patient_trainings)
-    .with_columns(
-      pl.col('date_of_session').str.to_date('%d-%m-%Y'),
-      cs.by_name(int_cols, require_all = False).cast(pl.Int64),
-      cs.by_name('data1', require_all = False)
-      .map_elements(utils.json_dumps_list, return_dtype = pl.String)
-    )
-  )
+  data_frames = {}
 
-  int_cols = ['totalmaster_trainer', 'total_trainees']
-  struct_cols = ['trainerdata1', 'traineesdata1']
-  nurse_trainings_df = (
-    pl.from_dicts(nurse_trainings)
-    .with_columns(
-      cs.by_name('sessiondateandtime', require_all = False).str.to_date('%d-%m-%Y'),
-      cs.by_name(int_cols, require_all = False).cast(pl.Int64),
-      cs.by_name(struct_cols, require_all = False)
-      .map_elements(utils.json_dumps_list, return_dtype = pl.String)
+  if patient_trainings:
+    int_cols = ['mothers_trained', 'family_members_trained', 'total_trained']
+    data_frames['patient_training_sessions'] = (
+      pl.from_dicts(patient_trainings)
+      .with_columns(
+        pl.col('date_of_session').str.to_date('%d-%m-%Y'),
+        cs.by_name(int_cols, require_all = False).cast(pl.Int64),
+        cs.by_name('data1', require_all = False)
+        .map_elements(utils.json_dumps_list, return_dtype = pl.String)
+      )
     )
-  )
+  else:
+    print('No patient training sessions found')
 
-  data_frames = {
-    'patient_training_sessions': patient_trainings_df,
-    'nurse_training_sessions': nurse_trainings_df,
-  }
+  if nurse_trainings:
+    int_cols = ['totalmaster_trainer', 'total_trainees']
+    struct_cols = ['trainerdata1', 'traineesdata1']
+    data_frames['nurse_training_sessions'] = (
+      pl.from_dicts(nurse_trainings)
+      .with_columns(
+        cs.by_name('sessiondateandtime', require_all = False).str.to_date('%d-%m-%Y'),
+        cs.by_name(int_cols, require_all = False).cast(pl.Int64),
+        cs.by_name(struct_cols, require_all = False)
+        .map_elements(utils.json_dumps_list, return_dtype = pl.String)
+      )
+    )
+  else:
+    print('No nurse training sessions found')
+
   return data_frames
 
 
@@ -174,8 +173,8 @@ def read_nurse_phones_from_bigquery(params):
   col_name = 'session_conducted_by'
   phones_raw = utils.read_bigquery(
     (
-      f"select distinct {col_name} from "
-      f"`{params['dataset']}.patient_training_sessions` "
+      f"select distinct {col_name} "
+      f"from `{params['dataset']}.patient_training_sessions` "
       f"where {col_name} != ''"
     ),
     params['credentials'])
@@ -191,12 +190,14 @@ def read_nurses_data_from_api(params, nurse_phones):
     nurse_details_nested = executor.map(report.get_nurse_details, nurse_phones)
   nurses = [x2 for x1 in nurse_details_nested for x2 in x1]
 
-  nurses_df = pl.from_dicts(nurses).with_columns(
+  data_frames = {}
+  if not nurses:
+    return data_frames
+
+  data_frames['nurses'] = pl.from_dicts(nurses).with_columns(
     cs.by_name('user_created_dateandtime', require_all = False)
     .str.to_datetime('%Y-%m-%d %H:%M:%S')
   )
-
-  data_frames = {'nurses': nurses_df}
   return data_frames
 
 
@@ -294,7 +295,7 @@ def main():
         nurse_phones = read_nurse_phones_from_bigquery(params)
         data = read_nurses_data_from_api(params['source_params'], nurse_phones)
 
-      if data is None:
+      if len(data) > 0:
         return None
 
       if args.dest == 'bigquery':
