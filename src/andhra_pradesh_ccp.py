@@ -171,14 +171,15 @@ def read_sessions_data_from_api(params, dates):
 
 def read_nurse_phones_from_bigquery(params):
   col_name = 'session_conducted_by'
-  phones_raw = utils.read_bigquery(
-    (
-      f"select distinct {col_name} "
-      f"from `{params['dataset']}.patient_training_sessions` "
-      f"where {col_name} != ''"
-    ),
-    params['credentials'])
-  phones = phones_raw.get_column(col_name).str.split(',').explode().unique().sort()
+  query = (
+    f"select distinct trim({col_name}_split) as {col_name} "
+    f"from `{params['dataset']}.patient_training_sessions`, "
+    f"unnest(split({col_name}, ',')) as {col_name}_split "
+    f"where {col_name} != '' "
+    f"order by {col_name}"
+  )
+  phones_raw = utils.read_bigquery(query, params['credentials'])
+  phones = phones_raw.get_column(col_name)
   return phones
 
 
@@ -199,6 +200,16 @@ def read_nurses_data_from_api(params, nurse_phones):
     .str.to_datetime('%Y-%m-%d %H:%M:%S')
   )
   return data_frames
+
+
+def get_latest_nurses_data(params, nurses_new):
+  if not utils.read_bigquery_exists('nurses', params):
+    return nurses_new
+  nurses_old = utils.read_bigquery(
+    f"select * from `{params['dataset']}.nurses`", params['credentials'])
+  nurses_concat = pl.concat([nurses_old, nurses_new], how = 'diagonal_relaxed')
+  nurses = nurses_concat.group_by('username').tail(1)
+  return nurses
 
 
 def write_data_to_excel(data_frames, filepath = 'data.xlsx'):
@@ -294,6 +305,7 @@ def main():
       elif entity == 'nurses':
         nurse_phones = read_nurse_phones_from_bigquery(params)
         data = read_nurses_data_from_api(params['source_params'], nurse_phones)
+        data['nurses'] = get_latest_nurses_data(params, data['nurses'])
 
       if len(data) > 0:
         if args.dest == 'bigquery':
