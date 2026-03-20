@@ -1,4 +1,4 @@
-slack_channel_id: C080138T9S6
+slack_channel_id: C06A4EDU8N6
 service_account_key: service_account_key.json
 project: noorahealth-raw
 sources:
