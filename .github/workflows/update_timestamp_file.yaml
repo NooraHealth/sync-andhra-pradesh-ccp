@@ -2,8 +2,7 @@ name: Update timestamp file
 
 on:
   schedule:
-    # - cron: '0 0 1 * *'
-    - cron: '0/10 * * * *'
+    - cron: '30 0 1 * *'
   workflow_dispatch:
 
 jobs:
