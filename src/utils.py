@@ -142,5 +142,5 @@ def send_message_to_slack(text, channel_id, token):
   client = slack_sdk.WebClient(token = token)
   try:
     client.chat_postMessage(channel = channel_id, text = text)
-  except slack_sdk.SlackApiError as e:
-    assert e.response['error']
+  except Exception as e:
+    raise e
