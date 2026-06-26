@@ -2,7 +2,7 @@ name: Sync Andhra Pradesh MLHP
 
 on:
   schedule:
-    - cron: '30 16 * * 3'
+    - cron: '30 18 * * 3'
   workflow_dispatch:
     inputs:
       timeout_mins:
