@@ -18,6 +18,6 @@ jobs:
           printf "This file was updated on $(date).\nPut that " > dont_readme.txt
           printf "in your pipe and smoke it, GitHub Actions.\n" >> dont_readme.txt
       
-      - uses: EndBug/add-and-commit@v10
+      - uses: EndBug/add-and-commit@v11
         with:
           default_author: github_actions
