@@ -70,6 +70,9 @@ def get_sessions_from_api(fromdate, todate, username, api_key, api_url):
     # .with_columns(cs.by_name(int_cols, require_all = False).cast(pl.Int64))
     .with_columns(
       pl.col('id').cast(pl.Int64),
+    # Converting all columns, but the id column to string
+    # Because the govt changed the datatype on 10/11/25 
+      (cs.numeric() - cs.by_name('id')).cast(pl.String),
       pl.col('session_date').str.to_date('%d-%m-%Y'),
       cs.by_name('subdata', require_all = False)
       .map_elements(utils.json_dumps_list, return_dtype = pl.String))
